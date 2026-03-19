@@ -3,84 +3,85 @@ package engine
 import "math"
 
 type PID struct {
-	Kp, Ki, Kd   float64
-	ErroAnterior float64
-	Integral     float64
+	Kp, Ki, Kd    float64
+	PreviousError float64
+	Integral      float64
 }
 
-func (c *PID) CalcularControlador(v_target float64, v_out float64, dt float64) float64 {
-	erro := v_target - v_out
+func (c *PID) ComputeControl(targetV float64, outV float64, dt float64) float64 {
+	err := targetV - outV
 
-	P := c.Kp * erro
+	P := c.Kp * err
 	I := c.Ki * c.Integral
-	D := c.Kd * (erro - c.ErroAnterior) / dt
-	controlador := P + I + D
+	D := c.Kd * (err - c.PreviousError) / dt
+	controlOutput := P + I + D
 
-	saturadoTopo := controlador > 1.0 && erro > 0
-	saturadoFundo := controlador < 0.0 && erro < 0
+	isSaturatedHigh := controlOutput > 1.0 && err > 0
+	isSaturatedLow := controlOutput < 0.0 && err < 0
 
-	if !saturadoTopo && !saturadoFundo {
-		c.Integral += erro * dt
+	if !isSaturatedHigh && !isSaturatedLow {
+		c.Integral += err * dt
 	}
-	c.ErroAnterior = erro
+	c.PreviousError = err
 
-	if controlador > 1.0 {
+	if controlOutput > 1.0 {
 		return 1.0
-	} else if controlador < 0.0 {
+	} else if controlOutput < 0.0 {
 		return 0.0
 	} else {
-		return controlador
+		return controlOutput
 	}
 }
 
-func (c *PID) Sintonizar(p Plant, a float64) {
-	c.Kd = (3 * a * p.L) - p.R
+func (c *PID) Tune(p Plant, alpha float64) {
+	c.Kd = (3 * alpha * p.L) - p.R
 	if c.Kd < 0 {
 		c.Kd = 0
 	}
 
-	c.Kp = (3 * (math.Pow(a, 2) * p.L * p.C)) - 1
+	c.Kp = (3 * (math.Pow(alpha, 2) * p.L * p.C)) - 1
 	if c.Kp < 0.1 {
 		c.Kp = 0.1
 	}
 
-	c.Ki = math.Pow(a, 3) * p.L * p.C
+	c.Ki = math.Pow(alpha, 3) * p.L * p.C
 	if c.Ki < 0.1 {
 		c.Ki = 0.1
 	}
 }
-func (c *PID) AutoSintonizar(p Plant) float64 {
+
+func (c *PID) AutoTune(p Plant) float64 {
 	low := 50.0
 	high := 8000.0
-	melhorAlfa := low
+	bestAlpha := low
 
 	for i := 0; i < 50; i++ {
-		alfaTeste := (low + high) / 2
-		testeP := p
-		testeP.Vout = 0
-		testeP.iL = 0
+		testAlpha := (low + high) / 2
+		testPlant := p
+		testPlant.Vout = 0
+		testPlant.iL = 0
 		tempPID := PID{}
-		tempPID.Sintonizar(testeP, alfaTeste)
-		overshoot := false
+		tempPID.Tune(testPlant, testAlpha)
+		hasOvershoot := false
 		dt := 0.0001
 
 		for t := 0.0; t < 0.1; t += dt {
-			controle := tempPID.CalcularControlador(testeP.V_target, testeP.Vout, dt)
-			testeP.V_in = controle * p.V_in
-			testeP.CalcularPasso(dt)
+			control := tempPID.ComputeControl(testPlant.VTarget, testPlant.Vout, dt)
+			testPlant.Vin = control * p.Vin
+			testPlant.ComputeStep(dt)
 
-			if testeP.Vout > testeP.V_target*1.05 {
-				overshoot = true
+			if testPlant.Vout > testPlant.VTarget*1.05 {
+				hasOvershoot = true
 				break
 			}
 		}
 
-		if overshoot {
-			high = alfaTeste
+		if hasOvershoot {
+			high = testAlpha
 		} else {
-			melhorAlfa = alfaTeste
-			low = alfaTeste
+			bestAlpha = testAlpha
+			low = testAlpha
 		}
 	}
-	return melhorAlfa
+	return bestAlpha
 }
