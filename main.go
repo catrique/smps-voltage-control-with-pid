@@ -2,7 +2,10 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"smps-voltage-control-with-pid/engine"
+	"strconv"
 )
 
 const TimeStep float64 = 0.0001
@@ -35,18 +38,20 @@ func main() {
 
 	fmt.Printf("Zeta: %f, %s \n\n", z, status)
 
-	if z == 0 {
-		fmt.Printf("%s", status)
-	}
-
 	var pid engine.PID
 	idealAlpha := pid.AutoTune(plant)
 	pid.Tune(plant, idealAlpha)
 
 	fmt.Printf("Sintonia Automática Concluída! Alfa escolhido: %.2f\n", idealAlpha)
 	fmt.Printf("Ganhos Calculados -> Kp: %.2f | Ki: %.2f | Kd: %.2f\n", pid.Kp, pid.Ki, pid.Kd)
+	fmt.Println("\nIniciando interface gráfica e simulação...")
 
-	fmt.Println("\nIniciando Simulação...")
+	cmd := exec.Command("love", "gui",
+		strconv.FormatFloat(plant.VTarget, 'f', 4, 64),
+	)
+
+	luaStdin, _ := cmd.StdinPipe()
+	cmd.Start()
 
 	powerSupply := engine.NewPowerSupply(originalVin, 0.05, 0.01)
 
@@ -55,9 +60,13 @@ func main() {
 		currentGridVin := powerSupply.GetVoltage()
 		plant.Vin = currentGridVin * controlOutput
 		plant.ComputeStep(TimeStep)
-		if int(i/TimeStep)%500 == 0 {
-			fmt.Printf("Tempo: %.3fs | Vin Rede: %.2fV | Vout: %.2fV | Duty Cycle: %.1f%%\n",
-				i, currentGridVin, plant.Vout, controlOutput*100)
+
+		if int(i/TimeStep)%10 == 0 {
+			// fmt.Printf("Tempo: %.3fs | Vin Rede: %.2fV | Vout: %.2fV | Duty Cycle: %.1f%%\n",
+			// 	i, currentGridVin, plant.Vout, controlOutput*100)
+			fmt.Fprintf(luaStdin, "%.4f,%.4f,%.4f\n", plant.Vout, currentGridVin, i)
+			os.Stdout.Sync()
 		}
 	}
+	cmd.Wait()
 }
