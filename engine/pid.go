@@ -6,47 +6,81 @@ type PID struct {
 	Kp, Ki, Kd    float64
 	PreviousError float64
 	Integral      float64
+	LastD         float64
+	TauD          float64
 }
 
 func (c *PID) ComputeControl(targetV float64, outV float64, dt float64) float64 {
 	err := targetV - outV
 
 	P := c.Kp * err
-	I := c.Ki * c.Integral
-	D := c.Kd * (err - c.PreviousError) / dt
-	controlOutput := P + I + D
 
-	isSaturatedHigh := controlOutput > 1.0 && err > 0
-	isSaturatedLow := controlOutput < 0.0 && err < 0
+	rawD := -(outV - c.PreviousError) / dt
+	c.PreviousError = outV
 
-	if !isSaturatedHigh && !isSaturatedLow {
-		c.Integral += err * dt
+	tauD := c.TauD
+	if tauD <= 0 && c.Kp > 0 && c.Kd > 0 {
+		tauD = c.Kd / (c.Kp * 10.0)
 	}
-	c.PreviousError = err
-
-	if controlOutput > 1.0 {
-		return 1.0
-	} else if controlOutput < 0.0 {
-		return 0.0
+	var alphaF float64
+	if tauD > 0 {
+		alphaF = dt / (tauD + dt)
 	} else {
-		return controlOutput
+		alphaF = 1.0
 	}
+	c.LastD = c.LastD + alphaF*(rawD-c.LastD)
+	D := c.Kd * c.LastD
+
+	c.Integral += c.Ki * err * dt
+	I := c.Integral
+
+	controlOutput := P + I + D
+	outputSat := controlOutput
+	if controlOutput > 1.0 {
+		outputSat = 1.0
+	} else if controlOutput < 0.0 {
+		outputSat = 0.0
+	}
+
+	if outputSat != controlOutput {
+		kb := math.Sqrt(c.Ki * c.Kp)
+		if kb < c.Ki {
+			kb = c.Ki
+		}
+		c.Integral += kb * (outputSat - controlOutput) * dt
+	}
+
+	return outputSat
 }
 
 func (c *PID) Tune(p Plant, alpha float64) {
-	c.Kd = (3 * alpha * p.L) - p.R
-	if c.Kd < 0 {
-		c.Kd = 0
+	LC := p.L * p.C
+	if LC <= 0 {
+		return
 	}
 
-	c.Kp = (3 * (math.Pow(alpha, 2) * p.L * p.C)) - 1
-	if c.Kp < 0.1 {
-		c.Kp = 0.1
+	c.Kp = 2*alpha*LC - 1
+	if c.Kp < 0.05 {
+		c.Kp = 0.05
 	}
 
-	c.Ki = math.Pow(alpha, 3) * p.L * p.C
-	if c.Ki < 0.1 {
-		c.Ki = 0.1
+	c.Ki = alpha * alpha * LC
+	if c.Ki < 0.5 {
+		c.Ki = 0.5
+	}
+
+	rawKd := (2*alpha*p.L - p.R) / (alpha * alpha * LC)
+	if rawKd < 0 {
+		rawKd = 0
+	}
+	maxKd := c.Kp / (5 * alpha)
+	if rawKd > maxKd {
+		rawKd = maxKd
+	}
+	c.Kd = rawKd
+
+	if c.Kp > 0 && c.Kd > 0 {
+		c.TauD = c.Kd / (c.Kp * 10.0)
 	}
 }
 
@@ -83,5 +117,7 @@ func (c *PID) AutoTune(p Plant) float64 {
 			low = testAlpha
 		}
 	}
+
+	c.Tune(p, bestAlpha)
 	return bestAlpha
 }
