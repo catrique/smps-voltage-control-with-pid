@@ -53,18 +53,37 @@ func main() {
 	luaStdin, _ := cmd.StdinPipe()
 	cmd.Start()
 
-	powerSupply := engine.NewPowerSupply(originalVin, 0.05, 0.01)
+	powerSupply := engine.NewPowerSupply(originalVin, 0.05)
+
+	noiseChannel := make(chan float64, 10)
+	go func() {
+		n := engine.NewNoise(0.02)
+		for {
+			noiseChannel <- n.GenerateNoise()
+		}
+	}()
+
+	dataGraph := make(chan string, 500)
+
+	go func() {
+		for msg := range dataGraph {
+			fmt.Fprint(luaStdin, msg)
+		}
+	}()
 
 	for i := 0.0; i < 50.0; i += TimeStep {
 		controlOutput := pid.ComputeControl(plant.VTarget, plant.Vout, TimeStep)
-		currentGridVin := powerSupply.GetVoltage()
+		noiseFactor := <-noiseChannel
+		currentGridVin := powerSupply.GetVoltage(noiseFactor)
 		plant.Vin = currentGridVin * controlOutput
 		plant.ComputeStep(TimeStep)
 
 		if int(i/TimeStep)%10 == 0 {
 			// fmt.Printf("Tempo: %.3fs | Vin Rede: %.2fV | Vout: %.2fV | Duty Cycle: %.1f%%\n",
 			// 	i, currentGridVin, plant.Vout, controlOutput*100)
-			fmt.Fprintf(luaStdin, "%.4f,%.4f,%.4f\n", plant.Vout, currentGridVin, i)
+			line := fmt.Sprintf("%.4f,%.4f,%.4f\n", plant.Vout, currentGridVin, i)
+			dataGraph <- line
+			// fmt.Fprintf(luaStdin, "%.4f,%.4f,%.4f\n", plant.Vout, currentGridVin, i)
 			os.Stdout.Sync()
 		}
 	}
