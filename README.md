@@ -1,5 +1,3 @@
-# smps-voltage-control-with-pid
-
 ## Simulação de uma Fonte Chaveada (SMPS) com Controle PID para Regulação de Tensão
 
 Este projeto apresenta uma simulação detalhada de uma **Fonte de Alimentação Chaveada (SMPS)** do tipo **Conversor Buck**, incorporando um **Controlador PID** avançado para a regulação de tensão em tempo real. A simulação é desenvolvida em **Go** para a lógica de controle e física, e utiliza **Lua com o framework LÖVE** para uma interface gráfica interativa que visualiza o comportamento do sistema.
